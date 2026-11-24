@@ -39,7 +39,8 @@ export const TYPES = {
   vraifaux:    { label: "Vrai ou faux",              aide: "Une affirmation, vraie ou fausse." },
   intrus:      { label: "Trouver l'intrus",          aide: "Plusieurs affirmations, une seule est fausse." },
   appariement: { label: "Appariement",               aide: "Relier chaque élément de gauche à son correspondant à droite." },
-  nuage:       { label: "Nuage de mots",             aide: "Chacun saisit un ou plusieurs mots, affichés en nuage." }
+  nuage:       { label: "Nuage de mots",             aide: "Chacun saisit un ou plusieurs mots, affichés en nuage." },
+  curseur:     { label: "Curseur",                   aide: "Trouver une valeur sur une échelle (min, max, bonne valeur)." }
 };
 
 export function uid(prefix = "") {
@@ -64,12 +65,16 @@ export function newQuiz(titre = "Nouveau quiz") {
     description: "",
     creation: now,
     maj: now,
+    classement: false,
     questions: []
   };
 }
 
+export const POINTS_DEFAUT = 100;
+export const POINTS_CHOIX = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000];
+
 export function newQuestion(type) {
-  const base = { id: uid("q"), type, enonce: "", explication: "" };
+  const base = { id: uid("q"), type, enonce: "", explication: "", points: POINTS_DEFAUT };
   switch (type) {
     case "choix":
       return { ...base, multiple: false, options: [
@@ -100,6 +105,8 @@ export function newQuestion(type) {
       ] };
     case "nuage":
       return { ...base, maxMots: 1 };
+    case "curseur":
+      return { ...base, min: 0, max: 100, pas: 1, valeur: 50, unite: "" };
     default:
       throw new Error("Type de question inconnu : " + type);
   }
@@ -165,6 +172,17 @@ export function validateQuestion(q) {
     case "nuage":
       if (!(q.maxMots >= 1 && q.maxMots <= 5)) e.push("Le nombre de mots doit être entre 1 et 5.");
       break;
+    case "curseur": {
+      const nums = [q.min, q.max, q.pas, q.valeur];
+      if (nums.some(x => typeof x !== "number" || !isFinite(x))) { e.push("Minimum, maximum, pas et bonne valeur doivent être des nombres."); break; }
+      if (q.min >= q.max) e.push("Le minimum doit être inférieur au maximum.");
+      if (q.pas <= 0) e.push("Le pas doit être positif.");
+      else if ((q.max - q.min) / q.pas > 10000) e.push("Trop de positions possibles : augmentez le pas.");
+      else if (!surGraduation(q.max, q)) e.push("Le maximum n'est pas atteignable avec ce pas (max − min doit être un multiple du pas).");
+      if (q.valeur < q.min || q.valeur > q.max) e.push("La bonne valeur doit être comprise entre le minimum et le maximum.");
+      else if (q.pas > 0 && !surGraduation(q.valeur, q)) e.push("La bonne valeur doit tomber sur une graduation (min + un multiple du pas).");
+      break;
+    }
   }
   return e;
 }
@@ -198,6 +216,7 @@ export function normalizeQuiz(obj) {
     description: obj.description || "",
     creation: obj.creation || now,
     maj: obj.maj || now,
+    classement: !!obj.classement,
     questions: obj.questions
   };
 }
@@ -249,6 +268,11 @@ export function pourParticipant(q) {
       return { question: { ...base, max: q.max, libelleMin: q.libelleMin, libelleMax: q.libelleMax }, correction: expl ? { explication: expl } : null };
     case "nuage":
       return { question: { ...base, maxMots: q.maxMots }, correction: expl ? { explication: expl } : null };
+    case "curseur":
+      return {
+        question: { ...base, min: q.min, max: q.max, pas: q.pas, unite: q.unite || "" },
+        correction: { valeur: q.valeur, min: q.min, max: q.max, unite: q.unite || "", explication: expl }
+      };
   }
   return { question: base, correction: null };
 }
@@ -263,6 +287,7 @@ export function estCorrect(type, correction, reponse) {
       return a === correction.ids.slice().sort().join("|");
     }
     case "vraifaux": return reponse === correction.valeur;
+    case "curseur": return Math.abs(Number(reponse) - correction.valeur) < 1e-9;
     case "intrus": return reponse === correction.id;
     case "matrice": {
       if (!correction.lignes) return null;
@@ -281,4 +306,69 @@ export function estCorrect(type, correction, reponse) {
 export function cleMot(mot) {
   return String(mot).normalize("NFD").replace(/[̀-ͯ]/g, "")
     .toLowerCase().replace(/[^a-z0-9' -]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+// -------------------------------------------------------------
+//  Curseur et points
+// -------------------------------------------------------------
+
+/** Nombre de décimales à afficher pour un pas donné (1 → 0, 0.5 → 1, 0.25 → 2). */
+export function decimales(pas) {
+  const t = String(pas);
+  return t.includes(".") ? t.split(".")[1].length : 0;
+}
+function surGraduation(v, q) {
+  const k = (v - q.min) / q.pas;
+  return Math.abs(k - Math.round(k)) < 1e-6;
+}
+export function formatNombre(v, pas = 1, unite = "") {
+  const d = decimales(pas);
+  const t = Number(v).toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
+  return unite ? `${t} ${unite}` : t;
+}
+
+/** La question peut-elle rapporter des points ? (bonne réponse attendue) */
+export function estNotee(q) {
+  switch (q.type) {
+    case "choix": return q.options.some(o => o.correcte);
+    case "matrice": return !!correctesMatrice(q);
+    case "vraifaux": case "intrus": case "appariement": case "curseur": return true;
+  }
+  return false; // échelle, nuage : jamais
+}
+/** Le type de question peut-il, en principe, être noté ? (pour l'éditeur) */
+export const TYPES_NOTABLES = ["choix", "matrice", "vraifaux", "intrus", "appariement", "curseur"];
+
+/**
+ * Points gagnés pour une réponse.
+ * Curseur : 2 × points si valeur exacte ; sinon points × (1 − écart / écart maximal), arrondi.
+ * Autres : tout ou rien.
+ */
+export function calculPoints(q, correction, reponse) {
+  if (!estNotee(q) || reponse === null || reponse === undefined) return 0;
+  const P = typeof q.points === "number" ? q.points : POINTS_DEFAUT;
+  if (q.type === "curseur") {
+    const v = Number(reponse);
+    if (!isFinite(v)) return 0;
+    const ecart = Math.abs(v - q.valeur);
+    if (ecart < 1e-9) return 2 * P;
+    const ecartMax = Math.max(q.valeur - q.min, q.max - q.valeur);
+    if (ecartMax <= 0) return 0;
+    return Math.max(0, Math.round(P * (1 - ecart / ecartMax)));
+  }
+  return estCorrect(q.type, correction, reponse) ? P : 0;
+}
+
+/** Classement à partir des points par question : [{ pid, pseudo, score, rang }] (ex aequo = même rang). */
+export function classement(pointsParQuestion, participants) {
+  const totaux = {};
+  for (const pid of Object.keys(participants || {})) totaux[pid] = 0;
+  for (const map of Object.values(pointsParQuestion || {})) {
+    for (const [pid, pts] of Object.entries(map || {})) totaux[pid] = (totaux[pid] || 0) + Number(pts || 0);
+  }
+  const list = Object.entries(totaux).map(([pid, score]) => ({
+    pid, score, pseudo: ((participants || {})[pid] || {}).pseudo || "Anonyme"
+  })).sort((a, b) => b.score - a.score || a.pseudo.localeCompare(b.pseudo, "fr"));
+  list.forEach((x, i) => { x.rang = i > 0 && x.score === list[i - 1].score ? list[i - 1].rang : i + 1; });
+  return list;
 }

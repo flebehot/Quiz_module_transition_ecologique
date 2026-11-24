@@ -4,7 +4,7 @@
 
 import { Db, participantId } from "./firebase.js";
 import { renderQuestion } from "./participant.js";
-import { estCorrect } from "./model.js";
+import { estCorrect, formatNombre } from "./model.js";
 import { el } from "./dom.js";
 
 const app = document.getElementById("app");
@@ -47,7 +47,16 @@ async function join(code) {
   try { mine = JSON.parse(localStorage.getItem(LS) || "{}"); } catch (_) {}
   const remember = () => { try { localStorage.setItem(LS, JSON.stringify(mine)); } catch (_) {} };
 
-  try { await db.put(`sessions/${code}/participants/${pid}`, Date.now()); } catch (_) {}
+  // ---------- pseudo (quiz avec classement) ----------
+  const LSP = "quizapp:pseudo:" + code;
+  let pseudo = null;
+  try { pseudo = localStorage.getItem(LSP); } catch (_) {}
+  if (pub.quiz && pub.quiz.classement && !pseudo) {
+    document.getElementById("rTitle").textContent = pub.quiz.titre || "Quiz";
+    pseudo = await askPseudo(code, pid);
+    try { localStorage.setItem(LSP, pseudo); } catch (_) {}
+  }
+  try { await db.put(`sessions/${code}/participants/${pid}`, pseudo ? { t: Date.now(), pseudo } : { t: Date.now() }); } catch (_) {}
 
   let key = "";          // phase + question affichées (évite de redessiner pendant la saisie)
   let editing = false;   // le participant modifie une réponse déjà envoyée
@@ -79,13 +88,16 @@ async function join(code) {
     if (e.phase === "attente" || !e.phase) {
       return show(el("div", { class: "r-card r-center" },
         el("div", { class: "r-emoji" }, "✅"),
-        el("h1", {}, "Vous êtes connecté"),
+        el("h1", {}, pseudo ? `Bienvenue, ${pseudo} !` : "Vous êtes connecté"),
         el("p", { class: "muted" }, "Le quiz va commencer. Gardez cette page ouverte : les questions s'afficheront automatiquement.")));
     }
     if (e.phase === "fin") {
+      const me = p.final && p.final.rangs && p.final.rangs[pid];
       return show(el("div", { class: "r-card r-center" },
-        el("div", { class: "r-emoji" }, "🎉"),
+        el("div", { class: "r-emoji" }, me ? (["🥇", "🥈", "🥉"][me.r - 1] || "🏁") : "🎉"),
         el("h1", {}, "Quiz terminé"),
+        me ? el("p", { class: "r-rank" }, el("strong", {}, me.r === 1 ? "1er" : me.r + "e"), ` sur ${p.final.nb}`) : null,
+        me ? el("p", { class: "r-total" }, me.s.toLocaleString("fr-FR") + (me.s > 1 ? " points" : " point")) : null,
         el("p", { class: "muted" }, "Merci pour votre participation !")));
     }
     if (!q) return show(el("p", { class: "r-center muted" }, "En attente de la question…"));
@@ -130,7 +142,20 @@ async function join(code) {
       const a = mine[q.id];
       const ok = estCorrect(q.type, c, a === undefined ? null : a);
       const parts = [el("p", { class: "p-top" }, num), el("h2", { class: "p-enonce" }, q.enonce)];
-      if (ok === true) parts.push(el("div", { class: "r-verdict good" }, "✓ Bonne réponse !"));
+      const ptsQ = p.points && p.points[q.id];
+      if (p.quiz && p.quiz.classement && ptsQ !== undefined) {
+        const gain = Number(ptsQ[pid] || 0);
+        const total = Object.values(p.points).reduce((t, m) => t + Number((m || {})[pid] || 0), 0);
+        parts.push(el("div", { class: "r-points" + (gain > 0 ? " win" : "") },
+          el("div", { class: "r-points-gain" }, "+" + gain.toLocaleString("fr-FR") + (gain > 1 ? " points" : " point")),
+          el("div", { class: "r-points-total" }, "Total : " + total.toLocaleString("fr-FR") + (total > 1 ? " points" : " point"))));
+      }
+      if (q.type === "curseur" && a !== undefined) {
+        const ecart = Math.abs(Number(a) - c.valeur);
+        parts.push(ecart < 1e-9
+          ? el("div", { class: "r-verdict good" }, "🎯 Valeur exacte !")
+          : el("div", { class: "r-verdict neutral" }, `Votre réponse : ${formatNombre(a, q.pas, q.unite)} (écart : ${formatNombre(ecart, q.pas, q.unite)})`));
+      } else if (ok === true) parts.push(el("div", { class: "r-verdict good" }, "✓ Bonne réponse !"));
       else if (ok === false) parts.push(el("div", { class: "r-verdict bad" }, "✗ Ce n'était pas la bonne réponse"));
       else if (a === undefined && c && hasAnswer(q.type, c)) parts.push(el("div", { class: "r-verdict neutral" }, "Vous n'avez pas répondu"));
       const sol = solution(q, c);
@@ -142,7 +167,7 @@ async function join(code) {
   }
 }
 
-function hasAnswer(type, c) { return ["vraifaux", "intrus", "appariement"].includes(type) || (type === "choix" && c.ids) || (type === "matrice" && c.lignes); }
+function hasAnswer(type, c) { return ["vraifaux", "intrus", "appariement", "curseur"].includes(type) || (type === "choix" && c.ids) || (type === "matrice" && c.lignes); }
 
 function solution(q, c) {
   if (!c) return null;
@@ -155,6 +180,7 @@ function solution(q, c) {
       return el("ul", {}, q.lignes.map(l => el("li", {}, l.texte, " : ",
         el("strong", {}, q.colonnes.filter(col => (c.lignes[l.id] || []).includes(col.id)).map(col => col.texte).join(", ")))));
     case "vraifaux": return c.valeur ? "Vrai" : "Faux";
+    case "curseur": return formatNombre(c.valeur, q.pas, q.unite);
     case "intrus": {
       const o = q.affirmations.find(x => x.id === c.id);
       return o ? el("span", {}, "l'intrus était « ", o.texte, " »") : null;
@@ -166,4 +192,33 @@ function solution(q, c) {
       }));
   }
   return null;
+}
+
+// ---------- saisie du pseudo ----------
+function askPseudo(code, pid) {
+  return new Promise((resolve) => {
+    const input = el("input", { type: "text", class: "r-pseudo-input", maxlength: "20", autocomplete: "nickname", placeholder: "Votre pseudo", "aria-label": "Pseudo" });
+    const err = el("p", { class: "r-error", role: "alert" });
+    const btn = el("button", { class: "p-send" }, "C'est parti !");
+    const go = async () => {
+      const v = input.value.trim().replace(/\s+/g, " ");
+      err.textContent = "";
+      if (v.length < 2) { err.textContent = "Au moins 2 caractères."; return; }
+      btn.disabled = true;
+      try {
+        const parts = (await db.get(`sessions/${code}/participants`)) || {};
+        const pris = Object.entries(parts).some(([id, x]) => id !== pid && x && x.pseudo && x.pseudo.toLowerCase() === v.toLowerCase());
+        if (pris) { err.textContent = "Ce pseudo est déjà pris, choisissez-en un autre."; btn.disabled = false; return; }
+      } catch (_) { /* en cas d'échec de la vérification, on accepte */ }
+      resolve(v);
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    btn.addEventListener("click", go);
+    app.replaceChildren(el("div", { class: "r-card r-center" },
+      el("div", { class: "r-emoji" }, "🏆"),
+      el("h1", {}, "Choisissez un pseudo"),
+      el("p", { class: "muted" }, "Il apparaîtra dans le classement affiché à la fin du quiz."),
+      input, err, btn));
+    input.focus();
+  });
 }

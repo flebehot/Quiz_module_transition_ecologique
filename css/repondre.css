@@ -20,3 +20,13 @@
 .r-solution ul{margin:6px 0 0;padding-left:20px}
 .r-expl{border-left:4px solid var(--ok);padding:6px 0 6px 12px;color:var(--ink)}
 .r-card .btn{margin-top:8px}
+
+.r-pseudo-input{display:block;width:100%;text-align:center;font-size:1.4rem!important;font-weight:700;margin:14px 0 4px;padding:12px!important}
+.r-points{text-align:center;border-radius:14px;padding:14px;margin:0 0 14px;background:var(--soft)}
+.r-points.win{background:linear-gradient(135deg,#fff6d6,#ffe9a8)}
+.r-points-gain{font-size:2rem;font-weight:800;color:var(--ink)}
+.r-points.win .r-points-gain{color:#9a6a00}
+.r-points-total{color:var(--muted);font-weight:600}
+.r-rank{font-size:1.4rem;margin:4px 0}
+.r-rank strong{font-size:2.4rem;color:var(--accent)}
+.r-total{font-size:1.2rem;font-weight:700;margin:0 0 10px}

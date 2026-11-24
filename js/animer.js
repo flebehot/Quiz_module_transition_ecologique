@@ -3,7 +3,7 @@
 //  réponses en direct, résultats et correction.
 // =============================================================
 
-import { TYPES, validateQuiz, pourParticipant, cleMot, correctesMatrice, estCorrect } from "./model.js";
+import { TYPES, validateQuiz, pourParticipant, cleMot, correctesMatrice, estCorrect, estNotee, calculPoints, classement, formatNombre } from "./model.js";
 import { Db, sessionCode } from "./firebase.js";
 import { SESSION_MAX_AGE_H } from "./config.js";
 import { el, toast } from "./dom.js";
@@ -24,7 +24,7 @@ export async function startLive(view, quiz, { onExit }) {
   const db = new Db();
   const live = {
     code: null, index: -1, phase: "accueil", showLive: false,
-    participants: 0, answers: {}, mode: "", correction: null, pubQuestion: null,
+    participants: 0, participantsData: {}, answers: {}, mode: "", correction: null, pubQuestion: null, ranking: null,
     stops: { participants: null, answers: null }
   };
   const qs = quiz.questions;
@@ -47,12 +47,13 @@ export async function startLive(view, quiz, { onExit }) {
       live.code = saved.code; live.index = saved.index; live.phase = saved.phase;
       live.correction = pub.correction || null;
       live.pubQuestion = pub.question || null;
+      if (live.phase === "fin" && quiz.classement) live.ranking = await computeRanking();
     } else {
       await purgeOldSessions(db);
       live.code = await newCode(db);
       await db.put(`index/${live.code}`, Date.now());
       await db.put(`sessions/${live.code}/pub`, {
-        quiz: { titre: quiz.titre, nb: qs.length },
+        quiz: { titre: quiz.titre, nb: qs.length, classement: !!quiz.classement },
         etat: { phase: "attente", index: -1, qid: null }
       });
     }
@@ -72,7 +73,9 @@ export async function startLive(view, quiz, { onExit }) {
 
   live.stops.participants = db.watch(`sessions/${live.code}/participants`, (v) => {
     live.participants = v ? Object.keys(v).length : 0;
+    live.participantsData = v || {};
     updateCounters();
+    if (live.phase === "accueil" || live.phase === "attente") drawPseudos();
   }, { onMode: (m) => { live.mode = m; updateCounters(); } });
 
   if (live.index >= 0 && live.phase !== "fin") watchAnswers();
@@ -121,13 +124,32 @@ export async function startLive(view, quiz, { onExit }) {
       correction.map = map;
     }
     live.correction = correction;
+    if (quiz.classement && estNotee(qs[live.index])) {
+      const q = qs[live.index];
+      const answers = (await db.get(`sessions/${live.code}/reponses/${q.id}`)) || {};
+      const pts = {};
+      for (const [pid, a] of Object.entries(answers)) pts[pid] = calculPoints(q, correction, a);
+      await db.put(`sessions/${live.code}/pub/points/${q.id}`, Object.keys(pts).length ? pts : null);
+    }
     live.phase = "correction";
     await db.patch(`sessions/${live.code}/pub`, { etat: { phase: "correction", index: live.index, qid: qs[live.index].id, nb: qs.length }, correction });
   });
+  async function computeRanking() {
+    const [points, parts] = await Promise.all([
+      db.get(`sessions/${live.code}/pub/points`),
+      db.get(`sessions/${live.code}/participants`)
+    ]);
+    return classement(points || {}, parts || {});
+  }
   const finish = () => act(async () => {
     live.phase = "fin";
     if (live.stops.answers) { live.stops.answers(); live.stops.answers = null; }
-    await db.patch(`sessions/${live.code}/pub`, { etat: { phase: "fin", index: live.index, qid: null, nb: qs.length }, question: null, correction: null });
+    let final = null;
+    if (quiz.classement) {
+      live.ranking = await computeRanking();
+      final = { nb: live.ranking.length, rangs: Object.fromEntries(live.ranking.map(x => [x.pid, { r: x.rang, s: x.score }])) };
+    }
+    await db.patch(`sessions/${live.code}/pub`, { etat: { phase: "fin", index: live.index, qid: null, nb: qs.length }, question: null, correction: null, final });
   });
 
   async function endSession() {
@@ -160,6 +182,13 @@ export async function startLive(view, quiz, { onExit }) {
   document.addEventListener("keydown", onKey);
 
   // ---------- affichage ----------
+  const pseudosBox = el("div", { class: "lv-pseudos" });
+  function drawPseudos() {
+    if (!quiz.classement) return;
+    const names = Object.values(live.participantsData).map(p => p && p.pseudo).filter(Boolean).sort((a, b) => a.localeCompare(b, "fr"));
+    pseudosBox.replaceChildren(...names.map(n => el("span", { class: "lv-chip" }, n)));
+  }
+
   function updateCounters() {
     const n = Object.keys(live.answers).length;
     const parts = [
@@ -223,12 +252,16 @@ export async function startLive(view, quiz, { onExit }) {
           el("p", { class: "lv-big" }, "Scannez le QR code avec votre téléphone"),
           el("p", {}, "ou ouvrez ", el("strong", {}, shortUrl)),
           el("p", {}, "et saisissez le code ", el("span", { class: "lv-code" }, live.code)),
-          el("p", { class: "lv-muted" }, "Vos réponses sont anonymes.")));
+          el("p", { class: "lv-muted" }, quiz.classement ? "Choisissez un pseudo : un classement sera établi à la fin du quiz." : "Vos réponses sont anonymes.")),
+        quiz.classement ? pseudosBox : null);
+      drawPseudos();
       controls = [el("button", { class: "btn lv-primary", onclick: primary }, "Commencer le quiz →")];
     } else if (live.phase === "fin") {
-      main = el("section", { class: "lv-end" },
-        el("h1", {}, "Merci pour votre participation !"),
-        el("p", { class: "lv-muted" }, `${qs.length} question${qs.length > 1 ? "s" : ""} · ${live.participants} participant${live.participants > 1 ? "s" : ""}`));
+      main = quiz.classement && live.ranking
+        ? renderRanking(live.ranking, qs.length)
+        : el("section", { class: "lv-end" },
+            el("h1", {}, "Merci pour votre participation !"),
+            el("p", { class: "lv-muted" }, `${qs.length} question${qs.length > 1 ? "s" : ""} · ${live.participants} participant${live.participants > 1 ? "s" : ""}`));
       controls = [
         el("button", { class: "btn ghost", onclick: () => openQuestion(live.index) }, "← Revenir à la dernière question"),
         el("button", { class: "btn lv-primary", onclick: endSession }, "Fermer la session et effacer les réponses")
@@ -372,6 +405,7 @@ export function renderResults(q, answers, reveal, pubQ) {
         reveal ? el("p", { class: "lv-score" }, `${Math.round(100 * allGood / n)} % ont trouvé toutes les associations`) : null);
     }
     case "nuage": return wordCloud(list);
+    case "curseur": return sliderResults(q, list, reveal);
   }
   return el("div");
 }
@@ -430,4 +464,66 @@ async function purgeOldSessions(db) {
     const limit = Date.now() - SESSION_MAX_AGE_H * 3600e3;
     await Promise.all(Object.entries(idx).filter(([, t]) => t < limit).map(([c]) => deleteSession(db, c)));
   } catch (_) { /* le nettoyage n'est pas bloquant */ }
+}
+
+// =============================================================
+//  Résultats du curseur : répartition des valeurs, moyenne, médiane
+// =============================================================
+function sliderResults(q, list, reveal) {
+  const vals = list.map(Number).filter(v => isFinite(v)).sort((a, b) => a - b);
+  const n = vals.length;
+  if (!n) return el("p", { class: "lv-wait" }, "En attente des réponses…");
+  const fmt = (v) => formatNombre(v, q.pas, q.unite);
+  const moy = vals.reduce((a, b) => a + b, 0) / n;
+  const med = n % 2 ? vals[(n - 1) / 2] : (vals[n / 2 - 1] + vals[n / 2]) / 2;
+  const span = q.max - q.min;
+  const pos = (v) => (100 * (v - q.min) / span) + "%";
+  // points empilés par valeur
+  const counts = new Map();
+  for (const v of vals) counts.set(v, (counts.get(v) || 0) + 1);
+  const dots = [];
+  for (const [v, c] of counts) for (let i = 0; i < c; i++) {
+    const exact = reveal && Math.abs(v - q.valeur) < 1e-9;
+    dots.push(el("span", { class: "lv-dot" + (exact ? " exact" : ""), style: { left: pos(v), bottom: (8 + i * 22) + "px" }, title: fmt(v) }));
+  }
+  const maxStack = Math.max(...counts.values());
+  const exactN = vals.filter(v => Math.abs(v - q.valeur) < 1e-9).length;
+  return el("div", { class: "lv-slider" },
+    el("div", { class: "lv-slider-stats" },
+      el("div", {}, el("span", {}, "Moyenne"), el("strong", {}, fmt(Math.round(moy / q.pas) * q.pas))),
+      el("div", {}, el("span", {}, "Médiane"), el("strong", {}, fmt(med))),
+      el("div", {}, el("span", {}, "Réponses de"), el("strong", {}, fmt(vals[0]) + " à " + fmt(vals[n - 1]))),
+      reveal ? el("div", { class: "good" }, el("span", {}, "Bonne valeur"), el("strong", {}, fmt(q.valeur))) : null),
+    el("div", { class: "lv-slider-plot", style: { height: (60 + maxStack * 22) + "px" } },
+      el("div", { class: "lv-slider-axis" }),
+      reveal ? el("div", { class: "lv-slider-target", style: { left: pos(q.valeur) } }, el("span", {}, fmt(q.valeur))) : null,
+      el("div", { class: "lv-slider-mean", style: { left: pos(moy) }, title: "Moyenne" }),
+      dots),
+    el("div", { class: "lv-slider-scale" }, el("span", {}, fmt(q.min)), el("span", {}, fmt(q.max))),
+    reveal ? el("p", { class: "lv-score" }, `${exactN} participant${exactN > 1 ? "s ont" : " a"} trouvé la valeur exacte`) : null);
+}
+
+// =============================================================
+//  Classement final
+// =============================================================
+function renderRanking(ranking, nbQuestions) {
+  if (!ranking.length) return el("section", { class: "lv-end" }, el("h1", {}, "Quiz terminé"), el("p", { class: "lv-muted" }, "Aucun participant classé."));
+  const podium = ranking.filter(x => x.rang <= 3);
+  const medal = (r) => ["🥇", "🥈", "🥉"][r - 1] || "";
+  const order = [2, 1, 3]; // 2e à gauche, 1er au centre, 3e à droite
+  return el("section", { class: "lv-ranking" },
+    el("h1", {}, "Classement final"),
+    el("div", { class: "lv-podium" }, order.map(r => {
+      const who = podium.filter(x => x.rang === r);
+      if (!who.length) return el("div", { class: "lv-step empty" });
+      return el("div", { class: "lv-step r" + r },
+        el("div", { class: "lv-step-names" }, who.map(x => el("div", { class: "lv-step-name" }, x.pseudo))),
+        el("div", { class: "lv-step-score" }, who[0].score.toLocaleString("fr-FR") + " pts"),
+        el("div", { class: "lv-step-block" }, medal(r)));
+    })),
+    ranking.length > podium.length
+      ? el("ol", { class: "lv-rest" }, ranking.filter(x => x.rang > 3).map(x =>
+          el("li", {}, el("span", { class: "lv-rest-rank" }, x.rang + "e"), el("span", { class: "lv-rest-name" }, x.pseudo), el("span", { class: "lv-rest-score" }, x.score.toLocaleString("fr-FR") + " pts"))))
+      : null,
+    el("p", { class: "lv-muted" }, `${ranking.length} participant${ranking.length > 1 ? "s" : ""} · ${nbQuestions} questions`));
 }

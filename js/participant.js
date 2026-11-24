@@ -14,7 +14,7 @@
 // =============================================================
 
 import { el, shuffle } from "./dom.js";
-import { melangeSansIdentite } from "./model.js";
+import { melangeSansIdentite, formatNombre } from "./model.js";
 
 let groupSeq = 0;
 
@@ -114,6 +114,29 @@ export function renderQuestion(q, { onChange = () => {} } = {}) {
         return a;
       };
       isComplete = () => true;
+      break;
+    }
+
+    case "curseur": {
+      let touched = false;
+      const mid = q.min + Math.round((q.max - q.min) / 2 / q.pas) * q.pas;
+      const out = el("output", { class: "p-slider-val" }, "?");
+      const range = el("input", { type: "range", class: "p-slider", min: q.min, max: q.max, step: q.pas, value: mid,
+        "aria-label": q.enonce,
+        oninput: () => { touched = true; range.classList.add("touched"); out.textContent = formatNombre(Number(range.value), q.pas, q.unite); change(); } });
+      const nudge = (d) => {
+        const v = Math.min(q.max, Math.max(q.min, Number(range.value) + d * q.pas));
+        range.value = v; range.dispatchEvent(new Event("input"));
+      };
+      body.append(
+        el("p", { class: "p-hint" }, "Faites glisser le curseur, puis ajustez avec − et +."),
+        out,
+        range,
+        el("div", { class: "p-slider-scale" }, el("span", {}, formatNombre(q.min, q.pas, q.unite)), el("span", {}, formatNombre(q.max, q.pas, q.unite))),
+        el("div", { class: "p-slider-nudge" },
+          el("button", { type: "button", class: "p-nudge", onclick: () => nudge(-1), "aria-label": "Diminuer" }, "−"),
+          el("button", { type: "button", class: "p-nudge", onclick: () => nudge(1), "aria-label": "Augmenter" }, "+")));
+      getAnswer = () => touched ? Number(range.value) : null;
       break;
     }
 

@@ -3,7 +3,7 @@
 //  Navigation par l'adresse :  #/  ·  #/quiz/<id>  ·  #/reglages
 // =============================================================
 
-import { TYPES, newQuiz, newQuestion, cloneQuestion, cloneQuiz, validateQuestion, validateQuiz, uid, MAX_PAIRES, MAX_LIB_PAIRE } from "./model.js";
+import { TYPES, newQuiz, newQuestion, cloneQuestion, cloneQuiz, validateQuestion, validateQuiz, uid, MAX_PAIRES, MAX_LIB_PAIRE, TYPES_NOTABLES, POINTS_CHOIX, POINTS_DEFAUT, formatNombre } from "./model.js";
 import { getSettings, saveSettings, makeStore, GitHubStore, LocalStore, exportQuizFile, importQuizFiles } from "./storage.js";
 import { renderQuestion } from "./participant.js";
 import { el, toast } from "./dom.js";
@@ -204,6 +204,11 @@ function renderEditor(focusQuestionId) {
       el("input", { type: "text", class: "big", value: quiz.titre, maxlength: "120", oninput: (e) => { quiz.titre = e.target.value; markDirty(); renderIssuesDebounced(); } })),
     el("label", { class: "field" }, el("span", {}, "Description (facultatif, pour vous)"),
       el("textarea", { rows: "2", oninput: (e) => { quiz.description = e.target.value; markDirty(); } }, quiz.description)),
+    el("div", { class: "classement-opt" + (quiz.classement ? " on" : "") },
+      toggle("Classement des participants", !!quiz.classement, (v) => { quiz.classement = v; markDirty(); renderEditor(); }),
+      el("p", { class: "muted small" }, quiz.classement
+        ? "Les participants saisissent un pseudo. Chaque question à bonne réponse rapporte des points (réglables ci-dessous) ; chacun voit ses points après la correction, et le classement s'affiche à la fin du quiz."
+        : "Désactivé : les participants restent anonymes, sans points ni classement.")),
     el("div", { id: "issues" })
   );
 
@@ -259,6 +264,7 @@ function questionCard(q, index) {
     el("label", { class: "field" }, el("span", {}, "Énoncé"),
       el("textarea", { rows: "2", placeholder: "Votre question…", oninput: (e) => { q.enonce = e.target.value; touch(); } }, q.enonce)),
     typeEditor(q, touch, restructure),
+    pointsRow(q, touch),
     el("details", { class: "field explication", open: !!q.explication },
       el("summary", {}, "Explication affichée à la correction (facultatif)"),
       el("textarea", { rows: "2", placeholder: "Pourquoi c'est la bonne réponse…", oninput: (e) => { q.explication = e.target.value; markDirty(); } }, q.explication)),
@@ -266,6 +272,22 @@ function questionCard(q, index) {
   );
   refreshProblems();
   return card;
+}
+
+// ---------- points de la question ----------
+function pointsRow(q, touch) {
+  if (!state.quiz.classement || !TYPES_NOTABLES.includes(q.type)) return null;
+  if (typeof q.points !== "number") q.points = POINTS_DEFAUT;
+  const hint = {
+    choix: "Sans effet si aucune bonne réponse n'est cochée.",
+    matrice: "Sans effet si aucune bonne réponse n'est cochée dans la grille.",
+    curseur: "Valeur exacte : le double. Sinon, une part des points selon l'écart, jusqu'à 0 pour l'écart maximal."
+  }[q.type];
+  return el("div", { class: "points-row" },
+    el("label", { class: "field inline" }, el("span", {}, "🏆 Points pour une bonne réponse"),
+      el("select", { onchange: (e) => { q.points = Number(e.target.value); touch(); } },
+        POINTS_CHOIX.map(v => el("option", { value: v, selected: q.points === v }, v)))),
+    hint ? el("span", { class: "muted small" }, hint) : null);
 }
 
 // ---------- éditeurs par type ----------
@@ -399,6 +421,32 @@ function typeEditor(q, touch, restructure) {
         el("button", { class: "btn ghost small", disabled: q.paires.length >= MAX_PAIRES, onclick: () => { q.paires.push({ id: uid("p"), gauche: "", droite: "" }); restructure(); } },
           q.paires.length >= MAX_PAIRES ? `Maximum atteint (${MAX_PAIRES} paires)` : "+ Ajouter une paire")
       );
+
+    case "curseur": {
+      const num = (key, label, attrs = {}) => el("label", { class: "field" }, el("span", {}, label),
+        el("input", { type: "number", value: q[key], step: "any", inputmode: "decimal", ...attrs,
+          oninput: (e) => { q[key] = e.target.value === "" ? NaN : Number(e.target.value); touch(); refresh(); } }));
+      const info = el("p", { class: "muted small" });
+      const refresh = () => {
+        const ok = [q.min, q.max, q.pas, q.valeur].every(x => typeof x === "number" && isFinite(x)) && q.max > q.min && q.pas > 0;
+        if (!ok) { info.textContent = ""; return; }
+        const n = Math.round((q.max - q.min) / q.pas) + 1;
+        const ecartMax = Math.max(q.valeur - q.min, q.max - q.valeur);
+        info.textContent = `${n} positions possibles, de ${formatNombre(q.min, q.pas, q.unite)} à ${formatNombre(q.max, q.pas, q.unite)}. ` +
+          `Bonne réponse : ${formatNombre(q.valeur, q.pas, q.unite)}` +
+          (state.quiz.classement ? ` · 0 point à ${formatNombre(ecartMax, q.pas, q.unite)} d'écart ou plus.` : ".");
+      };
+      refresh();
+      return el("div", { class: "type-editor" },
+        el("div", { class: "four-cols" },
+          num("min", "Minimum"),
+          num("max", "Maximum"),
+          num("pas", "Pas (précision)", { min: "0" }),
+          el("label", { class: "field" }, el("span", {}, "Unité (facultatif)"),
+            el("input", { type: "text", value: q.unite, maxlength: "12", placeholder: "%, €, km…", oninput: (e) => { q.unite = e.target.value.trim(); touch(); refresh(); } }))),
+        el("div", { class: "two-cols" }, num("valeur", "Bonne valeur à trouver"), el("div")),
+        info);
+    }
 
     case "nuage":
       return el("div", { class: "type-editor" },
