@@ -2,22 +2,17 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Quiz formation – Espace formateur</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b5fa5">
+<title>Quiz – Répondre</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%227%22 fill=%22%230b5fa5%22/%3E%3Ctext x=%2216%22 y=%2223%22 font-size=%2219%22 font-family=%22Arial%22 font-weight=%22bold%22 fill=%22white%22 text-anchor=%22middle%22%3EQ%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="css/app.css">
-<link rel="stylesheet" href="css/live.css">
+<link rel="stylesheet" href="../css/app.css">
+<link rel="stylesheet" href="../css/repondre.css">
 </head>
-<body>
-<header class="topbar">
-  <a href="#/" class="brand"><span class="logo">Q</span> Quiz formation</a>
-  <nav>
-    <span class="store">Stockage : <span id="storeLabel"></span></span>
-    <a href="#/reglages">Réglages</a>
-  </nav>
-</header>
-<main id="view" class="wrap"></main>
-<noscript><p class="wrap">Cette application nécessite JavaScript.</p></noscript>
-<script type="module" src="js/app.js"></script>
+<body class="r-body">
+<header class="r-top"><span class="logo">Q</span><span id="rTitle">Quiz</span><span id="rNet" class="r-net"></span></header>
+<main id="app" class="r-main"><p class="r-center muted">Chargement…</p></main>
+<noscript><p class="r-main">Cette page nécessite JavaScript.</p></noscript>
+<script type="module" src="../js/repondre.js"></script>
 </body>
 </html>

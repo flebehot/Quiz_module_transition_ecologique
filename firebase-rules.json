@@ -25,7 +25,7 @@
           ".write": "!newData.exists()",
           "$pid": {
             ".write": true,
-            ".validate": "newData.isNumber()"
+            ".validate": "newData.hasChild('t') && (!newData.hasChild('pseudo') || (newData.child('pseudo').isString() && newData.child('pseudo').val().length <= 20))"
           }
         },
 

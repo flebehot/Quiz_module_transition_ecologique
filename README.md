@@ -11,6 +11,8 @@ Site 100 % statique hébergé sur GitHub Pages : aucun serveur, aucune étape de
 |---|---|---|
 | 1 | Format des quiz, éditeur, aperçu participant, stockage navigateur / GitHub, export-import | ✅ livré |
 | 2 | Session en direct : QR code, interface de réponse mobile, écran des résultats (Firebase, flux SSE ou polling) | ✅ livré |
+| 3 | Matrice avec bonnes réponses, appariement par glisser-déposer | ✅ livré |
+| 4 | Question « curseur », classement facultatif (pseudos, points par question, classement final) | ✅ livré |
 | — | Page de diagnostic réseau (`diagnostic/`) | ✅ livrée |
 
 ## Structure
@@ -64,7 +66,10 @@ Le bouton **Exporter** télécharge un quiz en fichier `.json` ; **Importer un f
    La barre d'espace ou la flèche → enchaîne ces étapes ; **F** passe en plein écran.
 4. En fin de quiz : **Fermer la session et effacer les réponses**.
 
-Les participants sont anonymes. Les réponses sont supprimées à la fermeture de la session ;
+Si l'option **Classement des participants** est cochée dans le quiz, chacun saisit un pseudo ; les points
+(0 à 1000 par question) sont attribués à la révélation de la bonne réponse, et le classement s'affiche en fin de quiz.
+Curseur : valeur exacte = 2 × les points ; sinon points × (1 − écart / écart maximal possible), arrondi.
+Sans classement, les participants sont anonymes. Les réponses sont supprimées à la fermeture de la session ;
 les sessions oubliées sont effacées automatiquement au bout de 24 h (au lancement d'une nouvelle session).
 Si la page de l'animateur est rechargée par erreur, l'application propose de reprendre la session en cours.
 
