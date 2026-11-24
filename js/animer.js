@@ -3,7 +3,7 @@
 //  réponses en direct, résultats et correction.
 // =============================================================
 
-import { TYPES, validateQuiz, pourParticipant, cleMot } from "./model.js";
+import { TYPES, validateQuiz, pourParticipant, cleMot, correctesMatrice, estCorrect } from "./model.js";
 import { Db, sessionCode } from "./firebase.js";
 import { SESSION_MAX_AGE_H } from "./config.js";
 import { el, toast } from "./dom.js";
@@ -331,6 +331,8 @@ export function renderResults(q, answers, reveal, pubQ) {
         bars(rows, n));
     }
     case "matrice": {
+      const corr = correctesMatrice(q);
+      const showCorr = reveal && corr;
       const head = el("tr", {}, el("th", {}), q.colonnes.map(c => el("th", {}, c.texte)));
       const rows = q.lignes.map(l => {
         const resp = list.filter(a => a && a[l.id]);
@@ -338,11 +340,18 @@ export function renderResults(q, answers, reveal, pubQ) {
         return el("tr", {}, el("th", { class: "row-h" }, l.texte), q.colonnes.map(c => {
           const k = resp.filter(a => [].concat(a[l.id]).includes(c.id)).length;
           const pct = tot ? Math.round(100 * k / tot) : 0;
-          return el("td", { style: { background: `rgba(11,95,165,${(pct / 100) * 0.85})`, color: pct > 55 ? "#fff" : "inherit" } },
-            el("strong", {}, pct + " %"), el("span", {}, ` (${k})`));
+          const good = showCorr && (corr[l.id] || []).includes(c.id);
+          return el("td", { class: good ? "good" : (showCorr ? "dim" : ""),
+            style: good ? {} : { background: `rgba(11,95,165,${(pct / 100) * (showCorr ? 0.35 : 0.85)})`, color: pct > 55 && !showCorr ? "#fff" : "inherit" } },
+            good ? "✓ " : "", el("strong", {}, pct + " %"), el("span", {}, ` (${k})`));
         }));
       });
-      return el("table", { class: "lv-matrix" }, el("thead", {}, head), el("tbody", {}, rows));
+      const parts = [el("table", { class: "lv-matrix" }, el("thead", {}, head), el("tbody", {}, rows))];
+      if (showCorr) {
+        const ok = list.filter(a => estCorrect("matrice", { lignes: corr }, a)).length;
+        parts.push(el("p", { class: "lv-score" }, `${Math.round(100 * ok / n)} % ont coché exactement la bonne combinaison`));
+      }
+      return el("div", {}, parts);
     }
     case "appariement": {
       const droites = (pubQ && pubQ.droites) || [];

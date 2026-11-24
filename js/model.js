@@ -6,6 +6,32 @@
 
 export const FORMAT = "quiz-formation/1";
 
+// Limites de l'appariement (glisser-déposer sur téléphone)
+export const MAX_PAIRES = 6;
+export const MAX_LIB_PAIRE = 60;
+
+/** Bonnes réponses d'une matrice, nettoyées ; null si question d'opinion. */
+export function correctesMatrice(q) {
+  const cols = new Set(q.colonnes.map(c => c.id));
+  const out = {};
+  for (const l of q.lignes) {
+    const v = ((q.correctes || {})[l.id] || []).filter(id => cols.has(id));
+    if (v.length) out[l.id] = q.multiple ? v : [v[0]];
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** Mélange qui évite de laisser tous les éléments à leur place d'origine. */
+export function melangeSansIdentite(arr) {
+  const a = arr.slice();
+  if (a.length < 2) return a;
+  for (let t = 0; t < 20; t++) {
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    if (a.some((x, i) => x !== arr[i])) return a;
+  }
+  return a.reverse();
+}
+
 export const TYPES = {
   choix:       { label: "Choix multiple",            aide: "Une ou plusieurs bonnes réponses parmi une liste." },
   matrice:     { label: "Choix multiple matriciel",  aide: "Un tableau : pour chaque ligne, on coche une ou plusieurs colonnes." },
@@ -54,7 +80,8 @@ export function newQuestion(type) {
     case "matrice":
       return { ...base, multiple: false,
         lignes: [item("Ligne 1"), item("Ligne 2")],
-        colonnes: [item("Colonne 1"), item("Colonne 2"), item("Colonne 3")] };
+        colonnes: [item("Colonne 1"), item("Colonne 2"), item("Colonne 3")],
+        correctes: {} };
     case "echelle":
       return { ...base, max: 5,
         libelleMin: "Complètement en désaccord",
@@ -106,11 +133,17 @@ export function validateQuestion(q) {
       if (q.options.length < 2) e.push("Il faut au moins 2 réponses.");
       if (q.options.some(o => vide(o.texte))) e.push("Une réponse est vide.");
       break;
-    case "matrice":
+    case "matrice": {
       if (q.lignes.length < 1) e.push("Il faut au moins 1 ligne.");
       if (q.colonnes.length < 2) e.push("Il faut au moins 2 colonnes.");
       if ([...q.lignes, ...q.colonnes].some(o => vide(o.texte))) e.push("Une ligne ou une colonne est vide.");
+      const c = correctesMatrice(q);
+      if (c) {
+        const manque = q.lignes.filter(l => !c[l.id]).map(l => l.texte || "(sans titre)");
+        if (manque.length) e.push("Bonnes réponses incomplètes : rien n'est coché pour « " + manque.join(" », « ") + " ».");
+      }
       break;
+    }
     case "echelle":
       if (!(q.max >= 3 && q.max <= 10)) e.push("L'échelle doit aller de 1 à 3 au minimum, 10 au maximum.");
       break;
@@ -121,6 +154,8 @@ export function validateQuestion(q) {
       break;
     case "appariement":
       if (q.paires.length < 2) e.push("Il faut au moins 2 paires.");
+      if (q.paires.length > MAX_PAIRES) e.push(`Pas plus de ${MAX_PAIRES} paires, pour rester lisible sur téléphone.`);
+      if (q.paires.some(p => (p.gauche || "").length > MAX_LIB_PAIRE || (p.droite || "").length > MAX_LIB_PAIRE)) e.push(`Les libellés des paires doivent faire au plus ${MAX_LIB_PAIRE} caractères.`);
       if (q.paires.some(p => vide(p.gauche) || vide(p.droite))) e.push("Une paire est incomplète.");
       {
         const d = q.paires.map(p => p.droite.trim().toLowerCase());
@@ -197,15 +232,19 @@ export function pourParticipant(q) {
     case "appariement": {
       // les éléments de droite reçoivent des identifiants neutres pour ne pas trahir les paires
       const map = {};
-      const droites = q.paires.map(p => { const rid = uid("d"); map[p.id] = rid; return { id: rid, droite: p.droite }; });
-      for (let i = droites.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [droites[i], droites[j]] = [droites[j], droites[i]]; }
+      const droites = melangeSansIdentite(q.paires.map(p => { const rid = uid("d"); map[p.id] = rid; return { id: rid, droite: p.droite }; }));
       return {
         question: { ...base, paires: q.paires.map(p => ({ id: p.id, gauche: p.gauche })), droites },
         correction: { map, explication: expl }
       };
     }
-    case "matrice":
-      return { question: { ...base, multiple: !!q.multiple, lignes: q.lignes, colonnes: q.colonnes }, correction: expl ? { explication: expl } : null };
+    case "matrice": {
+      const lignes = correctesMatrice(q);
+      return {
+        question: { ...base, multiple: !!q.multiple, lignes: q.lignes, colonnes: q.colonnes },
+        correction: lignes ? { lignes, explication: expl } : (expl ? { explication: expl } : null)
+      };
+    }
     case "echelle":
       return { question: { ...base, max: q.max, libelleMin: q.libelleMin, libelleMax: q.libelleMax }, correction: expl ? { explication: expl } : null };
     case "nuage":
@@ -225,6 +264,11 @@ export function estCorrect(type, correction, reponse) {
     }
     case "vraifaux": return reponse === correction.valeur;
     case "intrus": return reponse === correction.id;
+    case "matrice": {
+      if (!correction.lignes) return null;
+      const norm = (v) => [].concat(v || []).slice().sort().join("|");
+      return Object.entries(correction.lignes).every(([l, cols]) => norm((reponse || {})[l]) === norm(cols));
+    }
     case "appariement": {
       const m = correction.map || {};
       return Object.keys(m).every(k => reponse[k] === m[k]);

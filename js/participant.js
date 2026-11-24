@@ -14,6 +14,7 @@
 // =============================================================
 
 import { el, shuffle } from "./dom.js";
+import { melangeSansIdentite } from "./model.js";
 
 let groupSeq = 0;
 
@@ -98,21 +99,21 @@ export function renderQuestion(q, { onChange = () => {} } = {}) {
     }
 
     case "appariement": {
-      body.append(el("p", { class: "p-hint" }, "Associez chaque élément à son correspondant."));
-      const droite = shuffle(q.droites || q.paires.map(p => ({ id: p.id, droite: p.droite })));
-      const selects = q.paires.map(p => {
-        const s = el("select", { onchange: change, "aria-label": p.gauche },
-          el("option", { value: "" }, "— choisir —"),
-          droite.map(d => el("option", { value: d.id }, d.droite)));
-        body.append(el("label", { class: "p-match" }, el("span", { class: "p-left" }, p.gauche), s));
-        return { id: p.id, s };
-      });
+      body.append(el("p", { class: "p-hint" }, "Faites glisser les éléments de droite pour les placer en face de leur correspondant. Vous pouvez aussi toucher deux éléments pour les échanger."));
+      const droites = q.droites || melangeSansIdentite(q.paires.map(p => ({ id: p.id, droite: p.droite })));
+      const left = el("ol", { class: "p-dd-left" }, q.paires.map(p => el("li", { class: "p-dd-cell" }, el("span", {}, p.gauche))));
+      const right = el("ol", { class: "p-dd-right", "aria-label": "Éléments à placer" }, droites.map(d =>
+        el("li", { class: "p-dd-cell p-drag", "data-id": d.id, tabindex: "0", role: "button" },
+          el("span", { class: "p-dd-grip", "aria-hidden": "true" }, "⠿"), el("span", {}, d.droite))));
+      body.append(el("div", { class: "p-dd" }, left, right));
+      makeSortable(right, change);
       getAnswer = () => {
+        const order = [...right.children].map(li => li.dataset.id);
         const a = {};
-        for (const x of selects) if (x.s.value) a[x.id] = x.s.value;
-        return Object.keys(a).length ? a : null;
+        q.paires.forEach((p, i) => { a[p.id] = order[i]; });
+        return a;
       };
-      isComplete = () => selects.every(x => x.s.value);
+      isComplete = () => true;
       break;
     }
 
@@ -135,4 +136,78 @@ export function renderQuestion(q, { onChange = () => {} } = {}) {
     body
   );
   return { node, getAnswer, isComplete };
+}
+
+// =============================================================
+//  Liste réordonnable au doigt ou à la souris (sans bibliothèque)
+//  - glisser un élément verticalement pour le déplacer
+//  - ou toucher un élément puis un autre pour les échanger
+//  - clavier : flèches haut / bas sur l'élément sélectionné
+// =============================================================
+function makeSortable(list, onChange) {
+  let drag = null, selected = null;
+  const items = () => [...list.children];
+  const select = (li) => {
+    if (selected) selected.classList.remove("selected");
+    selected = li;
+    if (li) li.classList.add("selected");
+  };
+  const swap = (a, b) => {
+    const marker = document.createComment("");
+    a.replaceWith(marker); b.replaceWith(a); marker.replaceWith(b);
+  };
+  const flash = (...lis) => lis.forEach(li => { li.classList.remove("moved"); void li.offsetWidth; li.classList.add("moved"); });
+
+  list.addEventListener("pointerdown", (e) => {
+    const li = e.target.closest(".p-drag");
+    if (!li || e.button > 0) return;
+    e.preventDefault();
+    li.setPointerCapture(e.pointerId);
+    const r = li.getBoundingClientRect();
+    const gap = parseFloat(getComputedStyle(list).rowGap) || 0;
+    drag = { li, startY: e.clientY, offset: 0, moved: false, step: r.height + gap };
+  });
+
+  list.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    let dy = e.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dy) < 8) return;
+    if (!drag.moved) { drag.moved = true; drag.li.classList.add("dragging"); select(null); }
+    const all = items();
+    const idx = all.indexOf(drag.li);
+    const target = Math.max(0, Math.min(all.length - 1, idx + Math.round(dy / drag.step)));
+    if (target !== idx) {
+      list.insertBefore(drag.li, target > idx ? all[target].nextSibling : all[target]);
+      drag.startY += (target - idx) * drag.step;
+      dy = e.clientY - drag.startY;
+    }
+    drag.li.style.transform = `translateY(${dy}px)`;
+  });
+
+  const end = () => {
+    if (!drag) return;
+    const { li, moved } = drag;
+    drag = null;
+    li.style.transform = "";
+    li.classList.remove("dragging");
+    if (moved) { flash(li); onChange(); return; }
+    // simple toucher : sélection puis échange
+    if (!selected) select(li);
+    else if (selected === li) select(null);
+    else { const other = selected; select(null); swap(other, li); flash(other, li); onChange(); }
+  };
+  list.addEventListener("pointerup", end);
+  list.addEventListener("pointercancel", end);
+
+  list.addEventListener("keydown", (e) => {
+    const li = e.target.closest(".p-drag");
+    if (!li) return;
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(selected === li ? null : li); return; }
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    const sib = e.key === "ArrowUp" ? li.previousElementSibling : li.nextElementSibling;
+    if (!sib) return;
+    if (e.key === "ArrowUp") list.insertBefore(li, sib); else list.insertBefore(sib, li);
+    li.focus(); flash(li); onChange();
+  });
 }

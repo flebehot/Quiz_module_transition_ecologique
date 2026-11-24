@@ -3,7 +3,7 @@
 //  Navigation par l'adresse :  #/  ·  #/quiz/<id>  ·  #/reglages
 // =============================================================
 
-import { TYPES, newQuiz, newQuestion, cloneQuestion, cloneQuiz, validateQuestion, validateQuiz, uid } from "./model.js";
+import { TYPES, newQuiz, newQuestion, cloneQuestion, cloneQuiz, validateQuestion, validateQuiz, uid, MAX_PAIRES, MAX_LIB_PAIRE } from "./model.js";
 import { getSettings, saveSettings, makeStore, GitHubStore, LocalStore, exportQuizFile, importQuizFiles } from "./storage.js";
 import { renderQuestion } from "./participant.js";
 import { el, toast } from "./dom.js";
@@ -269,8 +269,17 @@ function questionCard(q, index) {
 }
 
 // ---------- éditeurs par type ----------
-function textInput(obj, key, touch, placeholder = "") {
-  return el("input", { type: "text", value: obj[key], placeholder, maxlength: "200", oninput: (e) => { obj[key] = e.target.value; touch(); } });
+function textInput(obj, key, touch, placeholder = "", max = 200) {
+  return el("input", { type: "text", value: obj[key], placeholder, maxlength: String(max),
+    oninput: (e) => { obj[key] = e.target.value; touch(); },
+    onblur: touch.blur || null });
+}
+/** Pour les libellés affichés ailleurs (grille des bonnes réponses) : redessine à la sortie du champ. */
+function restructureSoon(touch, restructure) {
+  let changed = false;
+  const f = () => { changed = true; touch(); };
+  f.blur = () => { if (changed) restructure(); };
+  return f;
 }
 function removeBtn(arr, i, min, restructure, what = "cet élément") {
   return el("button", { class: "icon danger", title: "Retirer " + what, disabled: arr.length <= min, onclick: () => { arr.splice(i, 1); restructure(); } }, "✕");
@@ -304,20 +313,48 @@ function typeEditor(q, touch, restructure) {
       );
     }
 
-    case "matrice":
+    case "matrice": {
+      q.correctes = q.correctes || {};
+      const kind = q.multiple ? "checkbox" : "radio";
+      const cell = (l, c) => {
+        const on = (q.correctes[l.id] || []).includes(c.id);
+        return el("td", {}, el("input", { type: kind, name: "mx-" + q.id + "-" + l.id, checked: on, "aria-label": `${l.texte} / ${c.texte}`,
+          onclick: (e) => {
+            const cur = q.correctes[l.id] || [];
+            if (q.multiple) q.correctes[l.id] = e.target.checked ? [...cur, c.id] : cur.filter(x => x !== c.id);
+            else if (cur.includes(c.id)) { q.correctes[l.id] = []; e.target.checked = false; } // un second clic décoche
+            else q.correctes[l.id] = [c.id];
+            if (!q.correctes[l.id].length) delete q.correctes[l.id];
+            touch();
+          } }));
+      };
       return el("div", { class: "type-editor" },
-        toggle("Plusieurs choix possibles par ligne", q.multiple, (v) => { q.multiple = v; touch(); }),
+        toggle("Plusieurs choix possibles par ligne", q.multiple, (v) => {
+          q.multiple = v;
+          if (!v) for (const k in q.correctes) q.correctes[k] = q.correctes[k].slice(0, 1);
+          restructure();
+        }),
         el("div", { class: "two-cols" },
           el("div", {},
             el("h3", {}, "Lignes"),
-            el("ul", { class: "opts" }, q.lignes.map((o, i) => el("li", {}, textInput(o, "texte", touch, "Ligne " + (i + 1)), removeBtn(q.lignes, i, 1, restructure)))),
+            el("ul", { class: "opts" }, q.lignes.map((o, i) => el("li", {}, textInput(o, "texte", restructureSoon(touch, restructure), "Ligne " + (i + 1)), removeBtn(q.lignes, i, 1, restructure)))),
             el("button", { class: "btn ghost small", disabled: q.lignes.length >= 10, onclick: () => { q.lignes.push({ id: uid("o"), texte: "" }); restructure(); } }, "+ Ligne")),
           el("div", {},
             el("h3", {}, "Colonnes"),
-            el("ul", { class: "opts" }, q.colonnes.map((o, i) => el("li", {}, textInput(o, "texte", touch, "Colonne " + (i + 1)), removeBtn(q.colonnes, i, 2, restructure)))),
+            el("ul", { class: "opts" }, q.colonnes.map((o, i) => el("li", {}, textInput(o, "texte", restructureSoon(touch, restructure), "Colonne " + (i + 1)), removeBtn(q.colonnes, i, 2, restructure)))),
             el("button", { class: "btn ghost small", disabled: q.colonnes.length >= 6, onclick: () => { q.colonnes.push({ id: uid("o"), texte: "" }); restructure(); } }, "+ Colonne"))),
-        el("p", { class: "muted small" }, "Question sans bonne réponse : les résultats montrent la répartition des choix pour chaque ligne.")
+        el("h3", {}, "Bonnes réponses (facultatif)"),
+        el("p", { class: "muted small" }, q.multiple
+          ? "Cochez, pour chaque ligne, toutes les colonnes attendues. Rien de coché = question d'opinion, sans correction."
+          : "Cochez, pour chaque ligne, la colonne attendue. Rien de coché = question d'opinion, sans correction."),
+        el("div", { class: "mx-wrap" }, el("table", { class: "mx-grid" },
+          el("thead", {}, el("tr", {}, el("th", {}), q.colonnes.map(c => el("th", {}, c.texte || "…")))),
+          el("tbody", {}, q.lignes.map(l => el("tr", {}, el("th", { class: "row-h" }, l.texte || "…"), q.colonnes.map(c => cell(l, c))))))),
+        Object.keys(q.correctes).length
+          ? el("button", { class: "btn ghost small", onclick: () => { q.correctes = {}; restructure(); } }, "Effacer les bonnes réponses")
+          : null
       );
+    }
 
     case "echelle":
       return el("div", { class: "type-editor" },
@@ -353,13 +390,14 @@ function typeEditor(q, touch, restructure) {
 
     case "appariement":
       return el("div", { class: "type-editor" },
-        el("p", { class: "muted small" }, "Saisissez les paires correctes. La colonne de droite sera mélangée pour les participants."),
+        el("p", { class: "muted small" }, `Saisissez les paires correctes (${MAX_PAIRES} au maximum, libellés courts : ${MAX_LIB_PAIRE} caractères). Sur le téléphone, la colonne de droite est mélangée et le participant fait glisser chaque élément en face du bon correspondant.`),
         el("ul", { class: "opts pairs" }, q.paires.map((p, i) => el("li", {},
-          textInput(p, "gauche", touch, "Élément " + (i + 1)),
+          textInput(p, "gauche", touch, "Élément " + (i + 1), MAX_LIB_PAIRE),
           el("span", { class: "arrow" }, "↔"),
-          textInput(p, "droite", touch, "Correspondant " + (i + 1)),
+          textInput(p, "droite", touch, "Correspondant " + (i + 1), MAX_LIB_PAIRE),
           removeBtn(q.paires, i, 2, restructure, "cette paire")))),
-        el("button", { class: "btn ghost small", disabled: q.paires.length >= 8, onclick: () => { q.paires.push({ id: uid("p"), gauche: "", droite: "" }); restructure(); } }, "+ Ajouter une paire")
+        el("button", { class: "btn ghost small", disabled: q.paires.length >= MAX_PAIRES, onclick: () => { q.paires.push({ id: uid("p"), gauche: "", droite: "" }); restructure(); } },
+          q.paires.length >= MAX_PAIRES ? `Maximum atteint (${MAX_PAIRES} paires)` : "+ Ajouter une paire")
       );
 
     case "nuage":
@@ -393,8 +431,9 @@ function preview(start) {
       send.disabled = !r.isComplete();
     } });
     const send = el("button", { class: "p-send", disabled: true, onclick: () => toast("Aperçu : la réponse serait envoyée.") }, "Envoyer ma réponse");
+    send.disabled = !r.isComplete();
     screen.replaceChildren(el("div", { class: "p-top" }, `Question ${i + 1}/${qs.length}`), r.node, send);
-    answerBox.textContent = "Aucune réponse saisie";
+    answerBox.textContent = qs[i].type === "appariement" ? "Ordre initial : le participant peut envoyer tel quel ou réorganiser" : "Aucune réponse saisie";
     counter.textContent = `${i + 1} / ${qs.length}`;
     prev.disabled = i === 0; next.disabled = i === qs.length - 1;
   }

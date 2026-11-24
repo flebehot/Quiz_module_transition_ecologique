@@ -113,6 +113,7 @@ async function join(code) {
           status.textContent = /règles|401|403/.test(err.message) ? "Les réponses à cette question sont closes." : "Envoi impossible, réessayez. (" + err.message + ")";
         }
       } }, "Envoyer ma réponse");
+      send.disabled = !r.isComplete();
       return show(el("div", { class: "r-q" }, el("p", { class: "p-top" }, num), r.node, status, send));
     }
 
@@ -141,7 +142,7 @@ async function join(code) {
   }
 }
 
-function hasAnswer(type, c) { return ["vraifaux", "intrus", "appariement"].includes(type) || (type === "choix" && c.ids); }
+function hasAnswer(type, c) { return ["vraifaux", "intrus", "appariement"].includes(type) || (type === "choix" && c.ids) || (type === "matrice" && c.lignes); }
 
 function solution(q, c) {
   if (!c) return null;
@@ -149,6 +150,10 @@ function solution(q, c) {
     case "choix":
       if (!c.ids) return null;
       return el("ul", {}, q.options.filter(o => c.ids.includes(o.id)).map(o => el("li", {}, o.texte)));
+    case "matrice":
+      if (!c.lignes) return null;
+      return el("ul", {}, q.lignes.map(l => el("li", {}, l.texte, " : ",
+        el("strong", {}, q.colonnes.filter(col => (c.lignes[l.id] || []).includes(col.id)).map(col => col.texte).join(", ")))));
     case "vraifaux": return c.valeur ? "Vrai" : "Faux";
     case "intrus": {
       const o = q.affirmations.find(x => x.id === c.id);
