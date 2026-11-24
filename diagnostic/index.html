@@ -217,7 +217,12 @@
             if (res.ok) return { status: "ok", detail: "Écrit en " + ms + " ms" };
             if (res.status === 401 || res.status === 403) return { status: "warn", detail: "Base joignable mais écriture refusée par les règles de sécurité (HTTP " + res.status + ")" };
             return { status: "ko", detail: "HTTP " + res.status };
-          } catch (e) { return { status: "ko", detail: errText(e) }; }
+          } catch (e) {
+            // la requête n'a pas abouti : domaine bloqué, ou adresse erronée ?
+            const r = await reachable(base + "/.json?shallow=true");
+            if (r.status === "ko") return { status: "ko", detail: "Base injoignable (" + errText(e) + "). Vérifiez l'adresse ; si elle est correcte, le réseau bloque le domaine " + new URL(base).hostname.split(".").slice(-2).join(".") };
+            return { status: "ko", detail: "Le domaine répond mais la requête est rejetée (" + errText(e) + ") : filtrage probable par un proxy" };
+          }
         }
       },
       {
@@ -278,7 +283,12 @@
     $("reportCard").classList.add("hidden");
 
     const dbUrl = $("fburl").value.trim();
-    const tests = baseTests.concat(/^https:\/\//.test(dbUrl) ? ownDbTests(dbUrl) : []);
+    if (dbUrl && !/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebaseio\.com|firebasedatabase\.app)\/?$/i.test(dbUrl)) {
+      alert("L'adresse de la base ne semble pas correcte.\nElle doit ressembler à :\nhttps://mon-projet-default-rtdb.europe-west1.firebasedatabase.app\n(sans rien après .app)");
+      $("go").disabled = false;
+      return;
+    }
+    const tests = baseTests.concat(dbUrl ? ownDbTests(dbUrl) : []);
     render(tests);
 
     const results = {};
@@ -328,6 +338,7 @@
       "Contexte : " + $("ctx").value,
       "Navigateur : " + navigator.userAgent,
       "Page : " + location.href,
+      "Base testée : " + ($("fburl").value.trim() || "(aucune)"),
       ""
     ];
     for (const t of tests) {
