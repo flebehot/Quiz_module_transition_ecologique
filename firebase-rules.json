@@ -1,0 +1,45 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "index": {
+      ".read": true,
+      "$code": {
+        ".write": true,
+        ".validate": "newData.isNumber()"
+      }
+    },
+
+    "sessions": {
+      "$code": {
+        ".validate": "$code.length >= 4 && $code.length <= 8",
+
+        "pub": {
+          ".read": true,
+          ".write": true
+        },
+
+        "participants": {
+          ".read": true,
+          ".write": "!newData.exists()",
+          "$pid": {
+            ".write": true,
+            ".validate": "newData.isNumber()"
+          }
+        },
+
+        "reponses": {
+          ".read": true,
+          ".write": "!newData.exists()",
+          "$qid": {
+            "$pid": {
+              ".write": "root.child('sessions').child($code).child('pub/etat/phase').val() === 'question' && root.child('sessions').child($code).child('pub/etat/qid').val() === $qid",
+              ".validate": "newData.hasChildren() || newData.isNumber() || newData.isBoolean() || (newData.isString() && newData.val().length <= 100)"
+            }
+          }
+        }
+      }
+    }
+  }
+}
