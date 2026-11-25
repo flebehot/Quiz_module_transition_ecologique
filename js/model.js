@@ -16,7 +16,7 @@ export function correctesMatrice(q) {
   const out = {};
   for (const l of q.lignes) {
     const v = ((q.correctes || {})[l.id] || []).filter(id => cols.has(id));
-    if (v.length) out[l.id] = q.multiple ? v : [v[0]];
+    if (v.length) out[l.id] = v; // toujours plusieurs choix possibles par ligne
   }
   return Object.keys(out).length ? out : null;
 }
@@ -83,7 +83,7 @@ export function newQuestion(type) {
         { ...item("Réponse C"), correcte: false }
       ] };
     case "matrice":
-      return { ...base, multiple: false,
+      return { ...base, multiple: true,
         lignes: [item("Ligne 1"), item("Ligne 2")],
         colonnes: [item("Colonne 1"), item("Colonne 2"), item("Colonne 3")],
         correctes: {} };
@@ -260,7 +260,7 @@ export function pourParticipant(q) {
     case "matrice": {
       const lignes = correctesMatrice(q);
       return {
-        question: { ...base, multiple: !!q.multiple, lignes: q.lignes, colonnes: q.colonnes },
+        question: { ...base, multiple: true, lignes: q.lignes, colonnes: q.colonnes },
         correction: lignes ? { lignes, explication: expl } : (expl ? { explication: expl } : null)
       };
     }

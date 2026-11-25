@@ -337,25 +337,18 @@ function typeEditor(q, touch, restructure) {
 
     case "matrice": {
       q.correctes = q.correctes || {};
-      const kind = q.multiple ? "checkbox" : "radio";
+      q.multiple = true; // une matrice accepte toujours plusieurs choix par ligne (et par colonne)
       const cell = (l, c) => {
         const on = (q.correctes[l.id] || []).includes(c.id);
-        return el("td", {}, el("input", { type: kind, name: "mx-" + q.id + "-" + l.id, checked: on, "aria-label": `${l.texte} / ${c.texte}`,
-          onclick: (e) => {
+        return el("td", {}, el("input", { type: "checkbox", checked: on, "aria-label": `${l.texte} / ${c.texte}`,
+          onchange: (e) => {
             const cur = q.correctes[l.id] || [];
-            if (q.multiple) q.correctes[l.id] = e.target.checked ? [...cur, c.id] : cur.filter(x => x !== c.id);
-            else if (cur.includes(c.id)) { q.correctes[l.id] = []; e.target.checked = false; } // un second clic décoche
-            else q.correctes[l.id] = [c.id];
+            q.correctes[l.id] = e.target.checked ? [...cur.filter(x => x !== c.id), c.id] : cur.filter(x => x !== c.id);
             if (!q.correctes[l.id].length) delete q.correctes[l.id];
             touch();
           } }));
       };
       return el("div", { class: "type-editor" },
-        toggle("Plusieurs choix possibles par ligne", q.multiple, (v) => {
-          q.multiple = v;
-          if (!v) for (const k in q.correctes) q.correctes[k] = q.correctes[k].slice(0, 1);
-          restructure();
-        }),
         el("div", { class: "two-cols" },
           el("div", {},
             el("h3", {}, "Lignes"),
@@ -366,9 +359,7 @@ function typeEditor(q, touch, restructure) {
             el("ul", { class: "opts" }, q.colonnes.map((o, i) => el("li", {}, textInput(o, "texte", restructureSoon(touch, restructure), "Colonne " + (i + 1)), removeBtn(q.colonnes, i, 2, restructure)))),
             el("button", { class: "btn ghost small", disabled: q.colonnes.length >= 6, onclick: () => { q.colonnes.push({ id: uid("o"), texte: "" }); restructure(); } }, "+ Colonne"))),
         el("h3", {}, "Bonnes réponses (facultatif)"),
-        el("p", { class: "muted small" }, q.multiple
-          ? "Cochez, pour chaque ligne, toutes les colonnes attendues. Rien de coché = question d'opinion, sans correction."
-          : "Cochez, pour chaque ligne, la colonne attendue. Rien de coché = question d'opinion, sans correction."),
+        el("p", { class: "muted small" }, "Cochez, pour chaque ligne, toutes les colonnes attendues (une ou plusieurs ; une même colonne peut valoir pour plusieurs lignes). Rien de coché = question d'opinion, sans correction."),
         el("div", { class: "mx-wrap" }, el("table", { class: "mx-grid" },
           el("thead", {}, el("tr", {}, el("th", {}), q.colonnes.map(c => el("th", {}, c.texte || "…")))),
           el("tbody", {}, q.lignes.map(l => el("tr", {}, el("th", { class: "row-h" }, l.texte || "…"), q.colonnes.map(c => cell(l, c))))))),

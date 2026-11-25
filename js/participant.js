@@ -39,7 +39,7 @@ export function renderQuestion(q, { onChange = () => {} } = {}) {
     }
 
     case "matrice": {
-      const type = q.multiple ? "checkbox" : "radio";
+      const type = "checkbox"; // toujours plusieurs choix possibles par ligne
       const rows = q.lignes.map((l, li) => {
         const inputs = q.colonnes.map(c => el("input", { type, name: name + "-" + li, value: c.id, onchange: change }));
         body.append(el("fieldset", { class: "p-row" },
@@ -48,7 +48,7 @@ export function renderQuestion(q, { onChange = () => {} } = {}) {
         ));
         return { id: l.id, inputs };
       });
-      if (q.multiple) body.prepend(el("p", { class: "p-hint" }, "Plusieurs choix possibles par ligne"));
+      body.prepend(el("p", { class: "p-hint" }, "Plusieurs choix possibles par ligne"));
       getAnswer = () => {
         const a = {};
         for (const r of rows) { const v = r.inputs.filter(i => i.checked).map(i => i.value); if (v.length) a[r.id] = v; }
